@@ -1,0 +1,75 @@
+# dbt_project.yml
+# PURPOSE: Main dbt configuration for e-commerce Airflow AWS pipeline
+#
+# Key difference from Projects 1 and 2:
+# This project targets AWS Redshift instead of Snowflake
+# dbt works identically across both -- only the profile changes
+# This demonstrates dbt portability across cloud warehouses
+# -- a real skill that most engineers lack
+#
+# Materialization strategy for this pipeline:
+# Staging: views -- lightweight, cost efficient, runs fresh each time
+# Marts: tables -- pre-computed for fast Airflow + dashboard queries
+
+name: 'ecommerce_airflow_pipeline'
+version: '1.0.0'
+config-version: 2
+
+# Profile name -- matches profiles.yml on your local machine
+# profiles.yml stores Redshift connection credentials securely
+# Never stored in GitHub -- in .gitignore
+profile: 'ecommerce_airflow_pipeline'
+
+# File paths
+model-paths:  ["models"]
+test-paths:   ["tests"]
+seed-paths:   ["seeds"]
+macro-paths:  ["macros"]
+
+# Compiled SQL output -- gitignored
+target-path:  "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# ─────────────────────────────────────────────────────────────────
+# MODEL CONFIGURATIONS
+# ─────────────────────────────────────────────────────────────────
+
+models:
+  ecommerce_airflow_pipeline:
+
+    staging:
+      # VIEW -- staging is just cleaning logic
+      # No need to store physically -- recomputed on each DAG run
+      # Airflow triggers dbt run daily -- views always reflect
+      # the latest raw data loaded by the COPY command
+      +materialized: view
+      +schema: staging
+
+    marts:
+      # TABLE -- RFM mart is queried by dashboards constantly
+      # Pre-computing as a table means instant query response
+      # Airflow rebuilds this table fresh every day at 6am
+      # so dashboards always show yesterday's updated RFM scores
+      +materialized: table
+      +schema: marts
+
+# ─────────────────────────────────────────────────────────────────
+# VARIABLES
+# Passed to dbt models at runtime by Airflow DAG
+# Airflow sets execution_date so dbt knows which date to process
+# ─────────────────────────────────────────────────────────────────
+
+vars:
+  # Set by Airflow DAG at runtime
+  # Used in incremental models to filter new records only
+  execution_date: "{{ run_started_at.strftime('%Y-%m-%d') }}"
+
+  # RFM scoring thresholds
+  # Change here without touching SQL model code
+  high_value_order_threshold:   500
+  medium_value_order_threshold: 100
+
+  # Redshift specific
+  redshift_schema_prefix: "ecommerce"
