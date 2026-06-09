@@ -1,0 +1,199 @@
+# schema.yml
+# PURPOSE: Automated data quality tests for e-commerce pipeline
+# dbt runs ALL these tests after every Airflow DAG execution
+# Any failure stops the pipeline before bad data reaches dashboards
+#
+# In real e-commerce work: data quality tests are mandatory
+# Wrong RFM scores = wrong marketing campaigns = wasted budget
+# Same dbt testing pattern used in enterprise production pipelines
+
+version: 2
+
+sources:
+  - name: ecommerce_raw
+    description: "Raw e-commerce data loaded from AWS S3 into Redshift via Airflow DAG"
+    database: ecommerce_analytics
+    schema: ecommerce_raw
+    tables:
+      - name: raw_orders
+        description: "Raw orders from Olist dataset — one row per order, all columns VARCHAR"
+        columns:
+          - name: order_id
+            description: "Unique order identifier"
+            tests:
+              - not_null
+          - name: customer_id
+            description: "Customer identifier linking to raw_customers"
+            tests:
+              - not_null
+          - name: order_status
+            description: "Current status of the order"
+            tests:
+              - not_null
+          - name: order_purchase_timestamp
+            description: "Timestamp when customer placed the order"
+            tests:
+              - not_null
+
+      - name: raw_customers
+        description: "Raw customer data — one row per customer_id"
+        columns:
+          - name: customer_id
+            description: "Customer identifier"
+            tests:
+              - not_null
+          - name: customer_unique_id
+            description: "Unique customer across multiple orders"
+            tests:
+              - not_null
+
+      - name: raw_payments
+        description: "Raw payment data — multiple rows per order for installments"
+        columns:
+          - name: order_id
+            description: "Links to raw_orders"
+            tests:
+              - not_null
+          - name: payment_value
+            description: "Payment amount for this installment"
+            tests:
+              - not_null
+
+models:
+  - name: stg_orders
+    description: "Cleaned and standardized e-commerce orders joined with customer and payment data. One row per order with derived delivery and payment metrics."
+    columns:
+      - name: order_id
+        description: "Unique order identifier — cleaned and trimmed"
+        tests:
+          - not_null
+          - unique
+
+      - name: customer_id
+        description: "Customer identifier"
+        tests:
+          - not_null
+
+      - name: customer_unique_id
+        description: "Unique customer across all orders"
+        tests:
+          - not_null
+
+      - name: order_status
+        description: "Standardized order status in uppercase"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [
+                'DELIVERED',
+                'SHIPPED',
+                'CANCELED',
+                'UNAVAILABLE',
+                'INVOICED',
+                'PROCESSING',
+                'APPROVED',
+                'CREATED'
+              ]
+
+      - name: order_value
+        description: "Total payment value for the order — 0 if no payment record"
+        tests:
+          - not_null
+
+      - name: order_value_tier
+        description: "Order value classification — HIGH, MEDIUM, LOW, ZERO"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['HIGH_VALUE', 'MEDIUM_VALUE', 'LOW_VALUE', 'ZERO_VALUE']
+
+      - name: delivered_on_time
+        description: "TRUE if delivered before or on estimated delivery date"
+        tests:
+          - not_null
+
+      - name: order_purchase_timestamp
+        description: "Cleaned timestamp of order purchase"
+        tests:
+          - not_null
+
+      - name: order_date
+        description: "Date portion of purchase timestamp — truncated to day"
+        tests:
+          - not_null
+
+  - name: mart_sales_analytics
+    description: "Customer RFM scores, segments, and sales analytics. One row per unique customer with their complete RFM profile and segment classification."
+    columns:
+      - name: customer_unique_id
+        description: "Unique customer identifier — one row per customer"
+        tests:
+          - not_null
+          - unique
+
+      - name: customer_segment
+        description: "RFM-based customer segment classification"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [
+                'CHAMPION',
+                'LOYAL_CUSTOMER',
+                'POTENTIAL_LOYALIST',
+                'RECENT_CUSTOMER',
+                'AT_RISK',
+                'CANNOT_LOSE',
+                'HIBERNATING',
+                'PROMISING',
+                'NEEDS_ATTENTION'
+              ]
+
+      - name: recency_score
+        description: "RFM recency score 1-5 — 5 means bought most recently"
+        tests:
+          - not_null
+
+      - name: frequency_score
+        description: "RFM frequency score 1-5 — 5 means bought most often"
+        tests:
+          - not_null
+
+      - name: monetary_score
+        description: "RFM monetary score 1-5 — 5 means highest total spend"
+        tests:
+          - not_null
+
+      - name: rfm_total_score
+        description: "Combined RFM score — sum of all three scores, range 3-15"
+        tests:
+          - not_null
+
+      - name: recency_days
+        description: "Days since last purchase — lower is better"
+        tests:
+          - not_null
+
+      - name: frequency_orders
+        description: "Total number of delivered orders placed by customer"
+        tests:
+          - not_null
+
+      - name: monetary_total
+        description: "Total amount spent by customer across all delivered orders"
+        tests:
+          - not_null
+
+      - name: customer_state
+        description: "Brazilian state code where customer is located"
+        tests:
+          - not_null
+
+      - name: last_order_date
+        description: "Most recent order date — used to calculate recency"
+        tests:
+          - not_null
+
+      - name: first_order_date
+        description: "Date of customer's very first order"
+        tests:
+          - not_null
